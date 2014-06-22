@@ -1,0 +1,122 @@
+Practical Machine Learning Project
+========================================================
+
+Assumptions and Notes:
+--------------------------------------------------------
+1)  The following columns, though they may aid prediction (or are extraneous such as 'username'), are not viable predictors for out of sample predictions. They merely point to the order in which data was entered for the sample file and can thus distort the results: X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window.
+
+2) I had access to a linux server and so was able to parallel this over 16 cores allowing for a faster run time. I chose to run without preprocessing as I had the processing power to do without PCA. To show that I considered how this would run without a server please see code snipets at the bottom where I successfully used PCA to predict the outcome using my laptop at a much reduced processing time.
+
+3) As a further nod to reducing the processing time, a DataPartition was used to slice the data in half before any other processing was done.
+
+4) Out of Sample Error can be seen in the results of the second confusionMatrix below.
+
+5) A Graph is included to show the most important (top 10) variables that aided in prediciton. The model could be redone using these variable to further decrease the processing time while at the same time maximizing accuracy.
+
+Happy Reading
+
+Code:
+--------------------------------------------------------
+
+```{r}
+library(caret)
+library(randomForest)
+library(sampling)
+library(doMC)
+library(knitr)
+
+ptm <- proc.time()
+
+registerDoMC(cores = 16)
+
+Data <- read.csv('/home/isaac/pml-training.csv')
+FinalTesting <- read.csv('/home/isaac/pml-testing.csv')
+
+#Removing the following columns: X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window
+Data <- Data[,-c(1:7)]
+
+set.seed(111)
+
+#Reducing the size of the data to decrease processing time
+temp <- createDataPartition(y=Data$classe, p = 0.5, list = FALSE)
+ReduceSample <- Data[temp,]
+
+#Removing columns with near zero variance and when more than half the values of a column are NA
+reduceVar <- nearZeroVar(ReduceSample, freqCut = 100/1, uniqueCut = 10, saveMetrics = FALSE)
+DataCleaned <- ReduceSample[,-reduceVar]
+RemoveNA <- DataCleaned[,colSums(is.na(DataCleaned))<(nrow(DataCleaned)/2)]
+
+#Splitting the data into training and test sets
+inTrain <- createDataPartition(y=RemoveNA$classe, p = 0.6, list = FALSE)
+Training <- RemoveNA[inTrain,]
+TestingA <- RemoveNA[-inTrain,]
+
+#Splitting the testing data into two sets, testing and validation
+inTrain2 <- createDataPartition(y=TestingA$classe, p =0.5, list = FALSE)
+Testing <- TestingA[inTrain2,]
+Validation <- TestingA[-inTrain2,]
+
+#Removing all non-numeric columns from the data. Additional variables commented out as PCA currently excluded.
+NumPresent <- sapply(Training, is.numeric)
+NumTraining <- Training[,NumPresent]
+#NumTesting <- Testing[,NumPresent]
+#NumValidation <- Validation[,NumPresent]
+#NumFinalTesting <- FinalTesting[,NumPresent]
+
+#Creating K-Folds
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 10)
+
+#Training the model
+modelFit <- train(Training$classe ~ ., method ="rf", trControl = fitControl, data = NumTraining)
+
+#Shows overall execution time
+proc.time()-ptm
+```
+
+Testing Results:
+--------------------------------------------------------
+```{r}
+
+#TESTING
+confusionMatrix(Testing$classe, predict(modelFit,Testing))
+```
+
+Validation Results (Out of Sample Error):
+--------------------------------------------------------
+```{r}
+#VALIDATION (out of sample error)
+confusionMatrix(Validation$classe, predict(modelFit,Validation))
+```
+
+Unknown Sample:
+--------------------------------------------------------
+```{r}
+#predicting the results for the unknown samples
+predict(modelFit, FinalTesting)
+```
+
+The Top 10 Predictor Variables:
+--------------------------------------------------------
+
+```{r fig.width=10, fig.height=8}
+take <- varImp(modelFit)
+take <- take$importance
+take <- take[order(-take$Overall), , drop = FALSE]
+take <- take[1:10,, drop = FALSE]
+barplot(take[,1], names.arg=row.names(take),cex.names = 0.8, las = 3, main = "Top 10 Predictor Variables", ylab = "Percent")
+```
+
+Code I wrote but decided not to use:
+--------------------------------------------------------
+```{r}
+# Original method of reducing the sample to a more manageable size. Currently using two data partitions.
+#ReduceSample <- strata(Data, "classe",size=c(nrow(Data[Data$classe=='A',])/3,nrow(Data[Data$classe=='B',])/3,nrow(Data[Data$classe=='C',])/3,nrow(Data[Data$classe=='D',])/3,nrow(Data[Data$classe=='E',])/3), method="srswor")
+#ReduceSample <- Data[c(ReduceSample$ID_unit),]
+
+
+#Preprocessing using PCA failed as the predictive power decreased
+#preProc <- preProcess(NumTraining, method = 'pca', pcaComp = 30)
+#TrainingP <- predict(preProc, NumTraining)
+#TestingP <- predict(preProc, NumTesting)
+#ValidationP <- predict(preProc, NumValidation)
+#FinalTestingP <- predict(preProc, NumFinalTesting)
